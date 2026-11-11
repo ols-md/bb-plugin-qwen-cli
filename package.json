@@ -1,0 +1,51 @@
+{
+  "name": "bb-plugin-qwen-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Use the installed Qwen Code CLI as an ACP agent in BB.",
+  "files": [
+    "server.ts",
+    "host.ts",
+    "dialect.ts",
+    "prompt-mode.ts",
+    "dist/*.js",
+    "dist/*.meta.json",
+    "!dist/*.map",
+    "README.md",
+    "LICENSE",
+    "assets",
+    "skills",
+    "docs"
+  ],
+  "engines": {
+    "bb": ">=0.48",
+    "bbPluginSdk": ">=0.6.104 <0.7",
+    "node": ">=22"
+  },
+  "bb": {
+    "name": "Qwen CLI [Experimental]",
+    "description": "Chat with Qwen Code in BB using your installed CLI and existing sign-in.",
+    "branding": {
+      "icon": "./assets/icon.svg"
+    },
+    "server": "./server.ts",
+    "host": "./host.ts",
+    "skills": ["skills"]
+  },
+  "scripts": {
+    "build": "bb plugin build",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@get-bb/plugin-sdk": "0.6.125"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "@types/node": "^22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ols-md/bb-plugin-qwen-cli.git"
+  }
+}
