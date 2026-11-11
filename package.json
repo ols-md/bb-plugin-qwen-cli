@@ -40,7 +40,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@get-bb/plugin-sdk": "0.6.132"
+    "@get-bb/plugin-sdk": "0.6.133"
   },
   "devDependencies": {
     "typescript": "^7.0.2",
