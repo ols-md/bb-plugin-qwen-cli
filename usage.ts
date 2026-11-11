@@ -2,9 +2,6 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ProviderUsageResult } from "@get-bb/plugin-sdk/provider-bridge";
-import { experimental_execHostFile, experimental_hostToolchain } from "@get-bb/plugin-sdk/process";
-
-const USAGE_TIMEOUT_MS = 15_000;
 
 // Strip "[Provider Name] " prefix from model/plan names
 function cleanName(name: string): string {
@@ -18,13 +15,8 @@ interface TokenEntry {
   id: string;
   timestamp: string;
   localDate: string;
-  sessionId: string;
   model: string;
   totalTokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-  thoughtsTokens: number;
 }
 
 function readLocalTokenUsage(): Map<string, number> {
@@ -58,18 +50,21 @@ function readLocalTokenUsage(): Map<string, number> {
 // ---- Plan limits (approximate, from docs) ----
 
 const PLAN_LIMITS: Record<string, number> = {
-  // Token Plan models — approximate monthly limits in tokens
   "qwen3.8-max": 10_000_000,
   "qwen3.7-plus": 10_000_000,
   "qwen3.8-flash": 50_000_000,
+  "qwen4-max-preview": 10_000_000,
   "deepseek-v4-pro-0813": 10_000_000,
   "deepseek-v4.1-flash": 50_000_000,
   "glm-5.3": 10_000_000,
 };
 
+// ---- Provider config from settings file ----
+
 interface QwenProviderConfig {
   displayName: string;
   providerId: string;
+  hasKey: boolean;
 }
 
 function readQwenProviderConfig(): QwenProviderConfig | null {
@@ -80,11 +75,14 @@ function readQwenProviderConfig(): QwenProviderConfig | null {
     const providers = raw?.providers;
     if (!providers || typeof providers !== "object") return null;
 
-    // Find the active provider
     for (const [key, val] of Object.entries(providers)) {
       const p = val as any;
-      if (p?.apiKey && typeof p.apiKey === "string" && p.displayName) {
-        return { providerId: key, displayName: p.displayName };
+      if (p?.displayName) {
+        return {
+          providerId: key,
+          displayName: p.displayName,
+          hasKey: typeof p.apiKey === "string" && p.apiKey.length > 0,
+        };
       }
     }
     return null;
@@ -93,83 +91,28 @@ function readQwenProviderConfig(): QwenProviderConfig | null {
   }
 }
 
-// ---- Auth check via CLI ----
-
-function isUnauthenticated(text: string): boolean {
-  const lower = text.toLowerCase();
-  return (
-    lower.includes("not signed in") ||
-    lower.includes("authentication required") ||
-    (lower.includes("login") && lower.includes("required")) ||
-    lower.includes("unauthenticated") ||
-    lower.includes("no api key") ||
-    lower.includes("missing api key")
-  );
-}
-
-function isExpired(text: string): boolean {
-  const lower = text.toLowerCase();
-  return (
-    lower.includes("token expired") ||
-    lower.includes("session expired") ||
-    lower.includes("invalid_grant") ||
-    lower.includes("reauthenticate") ||
-    lower.includes("api key invalid") ||
-    lower.includes("unauthorized")
-  );
+function isInstalled(): boolean {
+  return existsSync(join(homedir(), ".qwen", "settings.json"));
 }
 
 // ---- Main usage function ----
 
-export async function readQwenProviderUsage(options?: {
-  command?: string;
-  cwd?: string;
-  env?: NodeJS.ProcessEnv;
-}): Promise<ProviderUsageResult> {
-  const command = options?.command ?? "qwen";
-  const cwd = options?.cwd ?? process.cwd();
-  const env = options?.env ?? process.env;
-
-  // Check if Qwen CLI is installed
-  try {
-    const resolved = experimental_hostToolchain.resolve(command, { cwd, env });
-    if (!resolved) {
-      return { supported: true, usage: { status: "not_installed" } };
-    }
-  } catch {
+export async function readQwenProviderUsage(): Promise<ProviderUsageResult> {
+  if (!isInstalled()) {
     return { supported: true, usage: { status: "not_installed" } };
   }
 
-  // Check auth status by running doctor
-  try {
-    const { stdout, stderr } = await experimental_execHostFile(
-      command,
-      ["-p", "/doctor", "--output-format", "json"],
-      { cwd, env, timeout: USAGE_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
-    );
-
-    const combined = `${stdout}\n${stderr}`;
-    if (isUnauthenticated(combined)) {
-      return { supported: true, usage: { status: "unauthenticated" } };
-    }
-    if (isExpired(combined)) {
-      return { supported: true, usage: { status: "expired" } };
-    }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (
-      (error as any)?.code === "ENOENT" ||
-      msg.includes("not found") ||
-      msg.includes("ENOENT")
-    ) {
-      return { supported: true, usage: { status: "not_installed" } };
-    }
-    return { supported: true, usage: { status: "error", message: "Qwen CLI check failed.", planLabel: null, accountEmail: null } };
+  const config = readQwenProviderConfig();
+  if (!config) {
+    return { supported: true, usage: { status: "not_installed" } };
   }
 
-  // Read config and local usage
-  const config = readQwenProviderConfig();
+  if (!config.hasKey) {
+    return { supported: true, usage: { status: "unauthenticated" } };
+  }
+
   const tokenUsage = readLocalTokenUsage();
+  const planLabel = cleanName(config.displayName);
 
   const windows = [...tokenUsage.entries()]
     .sort(([, a], [, b]) => b - a)
@@ -186,8 +129,6 @@ export async function readQwenProviderUsage(options?: {
       };
     });
 
-  const planLabel = config?.displayName ? cleanName(config.displayName) : "Qwen";
-
   // Add aggregate if multiple models
   if (windows.length > 1) {
     const totalTokens = [...tokenUsage.values()].reduce((a, b) => a + b, 0);
@@ -202,7 +143,7 @@ export async function readQwenProviderUsage(options?: {
       kind: "custom" as const,
       model: null as null,
     });
-  } else if (windows.length === 0 && config) {
+  } else if (windows.length === 0) {
     windows.push({
       label: planLabel,
       usedPercent: 0,

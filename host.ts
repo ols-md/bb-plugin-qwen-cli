@@ -9,7 +9,6 @@ import { Transform } from "node:stream";
 import { QWEN_ACP_DIALECT_ID, registerQwenAcpDialect } from "./dialect.ts";
 import { mapPromptMode } from "./prompt-mode.ts";
 import { readQwenProviderUsage } from "./usage.ts";
-import { experimental_acpLaunchSpecSchema } from "@get-bb/plugin-sdk/provider-bridge/acp";
 
 registerQwenAcpDialect();
 
@@ -198,14 +197,7 @@ export const experimental_providerBridge = {
       if (parsed.method === "provider/usage") {
         const id = parsed.id;
         if (typeof id === "string" || typeof id === "number") {
-          const po = parsed.params?.providerOptions;
-          const spec = experimental_acpLaunchSpecSchema.safeParse(po?.acpLaunchSpec);
-          const cmd = spec.success ? spec.data.command : "qwen";
-          void readQwenProviderUsage({
-            command: cmd,
-            cwd: spec.success ? spec.data.cwd : undefined,
-            env: { ...process.env, ...(spec.success ? spec.data.env : {}) },
-          })
+          void readQwenProviderUsage()
             .then((result) => {
               process.stdout.write(
                 `${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`,
