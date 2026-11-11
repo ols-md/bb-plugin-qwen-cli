@@ -86,7 +86,7 @@ export default async function qwenPlugin(bb: BbPluginApi) {
         project: [".qwen/skills"],
       },
       experimental_visibility: "always",
-      maintenance: { health: true, usage: false, installation: false },
+      maintenance: { health: true, usage: true, installation: true },
       capabilities: {
         supportsServiceTier: false,
         supportsNativeUserQuestion: false,
