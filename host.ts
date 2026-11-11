@@ -115,6 +115,38 @@ function tryAutoApprove(line: string): string | null {
 
 let filterInstalled = false;
 
+function cleanModelNames(line: string): string {
+  try {
+    const msg = JSON.parse(line);
+    // Clean provider/models response
+    if (msg.result?.models && Array.isArray(msg.result.models)) {
+      for (const m of msg.result.models) {
+        if (typeof m.displayName === "string") {
+          m.displayName = m.displayName.replace(/^\[.+?\]\s*/, "");
+        }
+      }
+    }
+    // Clean extension state with session options
+    for (const delta of Array.isArray(msg?.params?.deltas) ? msg.params.deltas : []) {
+      if (delta.kind === "extension.state" && delta.extensionKind === "bb/session-options" &&
+          Array.isArray(delta.payload?.options)) {
+        for (const opt of delta.payload.options) {
+          if (Array.isArray(opt.values)) {
+            for (const v of opt.values) {
+              if (typeof v.label === "string") {
+                v.label = v.label.replace(/^\[.+?\]\s*/, "");
+              }
+            }
+          }
+        }
+      }
+    }
+    return JSON.stringify(msg);
+  } catch {
+    return line;
+  }
+}
+
 function installFilter() {
   if (filterInstalled) return;
   filterInstalled = true;
@@ -130,14 +162,17 @@ function installFilter() {
       while ((end = pending.indexOf("\n")) !== -1) {
         const line = pending.slice(0, end);
         const result = tryAutoApprove(line);
-        if (result !== null) this.push(result + "\n");
+        if (result !== null) this.push(cleanModelNames(result) + "\n");
         pending = pending.slice(end + 1);
       }
       done();
     },
     flush(done) {
       pending += decoder.end();
-      if (pending && tryAutoApprove(pending) !== null) this.push(pending);
+      if (pending) {
+        const result = tryAutoApprove(pending);
+        if (result !== null) this.push(cleanModelNames(result));
+      }
       done();
     },
   });

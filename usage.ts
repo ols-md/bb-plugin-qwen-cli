@@ -1,10 +1,15 @@
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import type { ProviderUsageResult } from "@get-bb/plugin-sdk/provider-bridge";
 import { experimental_execHostFile, experimental_hostToolchain } from "@get-bb/plugin-sdk/process";
 
 const USAGE_TIMEOUT_MS = 15_000;
+
+// Strip "[Provider Name] " prefix from model/plan names
+function cleanName(name: string): string {
+  return name.replace(/^\[.+?\]\s*/, "");
+}
 
 // ---- Token usage from local file ----
 
@@ -173,13 +178,15 @@ export async function readQwenProviderUsage(options?: {
       const limit = PLAN_LIMITS[model];
       const usedPercent = limit ? Math.min(100, Math.round((tokens / limit) * 100)) : 0;
       return {
-        label: model,
+        label: cleanName(model),
         usedPercent,
         resetsAt: null,
         kind: "custom" as const,
         model: null as null,
       };
     });
+
+  const planLabel = config?.displayName ? cleanName(config.displayName) : "Qwen";
 
   // Add aggregate if multiple models
   if (windows.length > 1) {
@@ -189,7 +196,7 @@ export async function readQwenProviderUsage(options?: {
       .filter(Boolean)
       .reduce((a, b) => (a ?? 0) + (b ?? 0), 0);
     windows.unshift({
-      label: `${config?.displayName ?? "Qwen"} (total)`,
+      label: `${planLabel} (total)`,
       usedPercent: totalLimit ? Math.min(100, Math.round((totalTokens / totalLimit) * 100)) : 0,
       resetsAt: null,
       kind: "custom" as const,
@@ -197,7 +204,7 @@ export async function readQwenProviderUsage(options?: {
     });
   } else if (windows.length === 0 && config) {
     windows.push({
-      label: config.displayName,
+      label: planLabel,
       usedPercent: 0,
       resetsAt: null,
       kind: "custom" as const,
@@ -210,7 +217,7 @@ export async function readQwenProviderUsage(options?: {
     usage: {
       status: "ok",
       accountEmail: null,
-      planLabel: config?.displayName ?? "Qwen",
+      planLabel,
       windows,
     },
   };
