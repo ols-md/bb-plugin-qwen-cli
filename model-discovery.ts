@@ -136,15 +136,14 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
     const proxy = join(dir, "acp.mjs");
     await writeFile(proxy, `import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
-import {rmSync} from 'node:fs';
 const child=spawn(${JSON.stringify(launch.command)},${JSON.stringify(launch.args)}, {stdio:['pipe','inherit','inherit'],shell:process.platform==='win32' && !${JSON.stringify(launch.command)}.toLowerCase().endsWith('.exe'),windowsHide:true});
 createInterface({input:process.stdin}).on('line',line=>{
  try {const m=JSON.parse(line);if(m.method==='session/set_model') {m.params={...m.params,_meta:{...m.params?._meta,'qwen.session.modelPersistDefault':false}};line=JSON.stringify(m);}} catch {}
  child.stdin.write(line+'\\n');
 }).on('close',()=>child.stdin.end());
-const cleanup=()=>rmSync(${JSON.stringify(dir)},{recursive:true,force:true});
-child.on('exit',code=>{cleanup();process.exit(code??1)});
-child.on('error',()=>{cleanup();process.exit(1)});
+// The bridge reuses this launcher for catalog probes; host exit owns cleanup.
+child.on('exit',code=>process.exit(code??1));
+child.on('error',()=>process.exit(1));
 process.on('SIGTERM',()=>child.kill());
 `, { mode: 0o600 });
     directories.add(dir);
