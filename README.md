@@ -1,24 +1,48 @@
-# Qwen CLI for BB
+<p align="center">
+  <img src="assets/icon.svg" width="72" height="72" alt="Qwen plugin icon">
+</p>
 
-Use your installed [Qwen Code CLI](https://qwenlm.github.io/qwen-code-docs/) as an ACP agent in BB — no extra sign-in, no separate configuration.
+<h1 align="center">Qwen CLI for BB</h1>
 
-## Features
+<p align="center">
+  Use your Qwen Code CLI account to code in BB — same models, same tools, no extra configuration.
+</p>
 
-- **Native Qwen Code** — runs `qwen --acp` through BB's ACP bridge, same models and tools as the CLI
-- **Plan mode** — research and plan before implementing (`--prompt-mode plan` or composer action)
+<p align="center">
+  <a href="#quick-start">Quick start</a> &middot;
+  <a href="#settings">Settings</a> &middot;
+  <a href="#usage">Usage</a> &middot;
+  <a href="#modes--permissions">Modes &amp; permissions</a> &middot;
+  <a href="SECURITY.md">Security</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/BB-%E2%89%A5%200.48-blue" alt="BB version">
+  <img src="https://img.shields.io/badge/node-%E2%89%A5%2022-green" alt="Node version">
+  <img src="https://img.shields.io/badge/license-MIT-brightgreen" alt="License">
+  <img src="https://img.shields.io/badge/Qwen%20Code-v0.27-purple" alt="Qwen Code version">
+</p>
+
+---
+
+A community provider that connects [BB](https://getbb.app) to the [Qwen Code CLI](https://qwenlm.github.io/qwen-code-docs/). Keep your existing CLI sign-in, choose your models, and work with streamed responses and tool approvals inside BB.
+
+**Status:** available in the BB Community marketplace. Tested on Windows.
+
+## What you get
+
+- **One provider in BB** — select Qwen CLI when creating a thread
+- **Live model discovery** — models and reasoning options come from your CLI and account
+- **Plan and Build** — plan a task, then switch to implementation
+- **Permission controls** — Accept edits or Full access
+- **Usage tracking** — real token usage per model from Qwen's local logs
 - **Auto-approve** — automatically approve permission requests in Accept edits mode
-- **Sandbox support** — run commands in Qwen's sandbox (`--sandbox`)
-- **BB-native delegation** — disable Qwen subagents and use `bb thread spawn` instead
-- **Command descriptions** — human-readable tool summaries instead of raw commands
-- **Native skills** — Qwen skills from `~/.qwen/skills` and project `.qwen/skills`
+- **BB-native delegation** — optionally disable Qwen subagents so agents use `bb thread spawn`
+- **Rich tool cards** — command summaries, file reads, web fetches, and search results with clean output
+- **Native skills** — workspace `.qwen/skills` and personal `~/.qwen/skills` discovered in BB
+- **Togglable settings** — enable/disable the provider, toggle features without editing files
 
-## Requirements
-
-- **[Qwen Code CLI](https://qwenlm.github.io/qwen-code-docs/en/docs/getting-started/)** installed and on PATH
-- **Node.js** ≥ 22
-- **BB** ≥ 0.48
-
-## Install
+## Quick start
 
 ### 1. Install Qwen Code CLI
 
@@ -28,14 +52,14 @@ npm install -g @qwen-code/qwen-code@latest
 
 ### 2. Sign in
 
-Run Qwen interactively once and use `/auth` to configure your credentials:
+Run Qwen interactively once and use `/auth`:
 
 ```sh
 qwen
-# Then type /auth and follow the prompts
+# Type /auth and follow the prompts
 ```
 
-For CI/headless use, set environment variables instead:
+For CI or headless use, set environment variables:
 
 ```sh
 export OPENAI_API_KEY="your-key"
@@ -45,79 +69,96 @@ export OPENAI_BASE_URL="https://token-plan.ap-southeast-1.maas.aliyuncs.com/comp
 ### 3. Install the plugin
 
 ```sh
+bb plugin install qwen-cli
+```
+
+Or from the repo directly:
+
+```sh
 bb plugin install github:ols-md/bb-plugin-qwen-cli
 ```
 
-Or for local development:
+### 4. Start a thread
+
+Select **Qwen CLI** in BB's provider picker, choose a model, and send a prompt.
 
 ```sh
-git clone https://github.com/ols-md/bb-plugin-qwen-cli.git
-cd bb-plugin-qwen-cli
-npm install
-bb plugin install .
+bb thread spawn --provider qwen-cli --model qwen3.8-max --prompt "Add rate limiting to the API"
 ```
 
-### 4. Verify
+## How it works
 
-```sh
-bb provider models qwen-cli --json
+```
+Your BB thread → Plugin → BB's shared ACP bridge → qwen --acp → Qwen Code service
 ```
 
-## Use
+The plugin launches `qwen --acp` on your machine. BB's shared [Agent Client Protocol](https://agentclientprotocol.com) bridge handles streaming, tool updates, approvals, and session communication. Authentication stays with the CLI — you never enter an API key into the plugin.
 
-```sh
-# Spawn a thread with a specific model
-bb thread spawn --provider qwen-cli --model qwencloud-token-plan/qwen4-max-preview --prompt "Refactor the auth module"
+## Modes & permissions
 
-# Plan mode (research only, no edits)
-bb thread spawn --provider qwen-cli --prompt-mode plan --prompt "Design a caching layer"
-
-# With reasoning level
-bb thread spawn --provider qwen-cli --model qwencloud-token-plan/qwen4-max-preview --reasoning-level high --prompt "..."
-```
+| Control | Choice | Behavior |
+|---|---|---|
+| Work mode | Plan | Research and outline a task. No files modified, no commands run. |
+| Work mode | Build | Implement the task under the selected permission policy. |
+| Permissions | Accept edits | Edits files automatically. Shell commands, web fetches, and external paths prompt for approval. |
+| Permissions | Full access | All operations allowed without prompting. |
 
 ## Settings
 
-| Setting | Default | Description |
+Open **Settings → Installed plugins → Qwen CLI** or use the CLI:
+
+```sh
+bb plugin config qwen-cli set <key> <value>
+```
+
+| Setting | Default | What it does |
 |---|---|---|
 | `enabled` | `true` | Show Qwen CLI in the provider picker |
 | `autoApprove` | `false` | Auto-approve permission requests in Accept edits mode |
-| `sandbox` | `false` | Run commands in Qwen's sandbox |
-| `subagentsDisabled` | `false` | Block native subagent tools; use BB threads for delegation |
+| `sandbox` | `false` | Run commands in Qwen's sandbox (`--sandbox`) |
+| `subagentsDisabled` | `false` | Block native subagent tools; agents delegate via `bb thread spawn` |
 | `commandDescriptionsEnabled` | `true` | Show tool summaries instead of raw commands |
 
-Configure from the BB UI (`Settings → Plugins → Qwen CLI`) or CLI:
+## Usage
+
+Spawn threads with any Qwen model:
 
 ```sh
-bb plugin config qwen-cli set autoApprove true
-bb plugin config qwen-cli set subagentsDisabled true
+# Standard
+bb thread spawn --provider qwen-cli --model qwen3.8-max --prompt "Refactor auth"
+
+# Plan mode
+bb thread spawn --provider qwen-cli --prompt-mode plan --prompt "Design caching layer"
+
+# With reasoning
+bb thread spawn --provider qwen-cli --model deepseek-v4-pro-0813 --reasoning-level high --prompt "..."
 ```
 
-## Permissions
-
-- **Accept edits** — edits files automatically; asks before shell commands, web fetches, and paths outside the workspace
-- **Full access** — allows all operations without prompting
+Token usage per model is shown in BB's usage panel and `bb settings usage --refresh`.
 
 ## Architecture
 
 ```
 bb-plugin-qwen-cli/
-├── server.ts            Plugin registration, settings, provider declaration
-├── host.ts              ACP bridge (launches qwen --acp, handles approvals)
-├── dialect.ts           Qwen tool detection, classification, and presentation
-├── prompt-mode.ts       Maps BB plan mode to Qwen ACP session options
-├── skills/qwen-cli/     Agent-facing skill doc for thread context
-└── assets/              SVG icons (Qwen logo)
+├── server.ts              Plugin registration, settings, provider declaration
+├── host.ts                ACP bridge — launches qwen --acp, auto-approve filter
+├── dialect.ts             Tool detection, classification, and presentation
+├── prompt-mode.ts         Maps BB plan mode to Qwen ACP session options
+├── usage.ts               Token usage tracking from Qwen's local logs
+├── skills/qwen-cli/       Agent-facing skill documentation
+└── assets/                Qwen icon (currentColor SVG)
 ```
 
 ## Troubleshooting
 
-**"Authentication required"**: Run `qwen` interactively and use `/auth` to sign in.
-
-**"missing_executable"**: Install Qwen Code CLI: `npm install -g @qwen-code/qwen-code@latest`
-
-**Models not loading**: Check your auth status with `qwen` → `/doctor`
+| Problem | What to check |
+|---|---|
+| Qwen CLI missing from picker | Enable the plugin in Settings → Plugins → Qwen CLI |
+| `qwen` not found | `npm install -g @qwen-code/qwen-code@latest` |
+| Auth required | Run `qwen` and use `/auth` to sign in |
+| Models not loading | Run `qwen` → `/doctor` to check auth status |
+| Commands run without asking | Check permission mode; Full access auto-approves |
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+[MIT](LICENSE). This project is independent of Alibaba, Qwen, and BB.
