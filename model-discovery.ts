@@ -69,6 +69,7 @@ export function mergeSettings(a: Settings, b: Settings): Settings {
 
 // Paths remain valid for all child settings reloads, and are removed with the host worker.
 const directories = new Set<string>();
+const overlays = new Map<string, Promise<{ path: string; proxy: string }>>();
 process.once("exit", () => { for (const dir of directories) rmSync(dir, { recursive: true, force: true }); });
 
 export async function prepareModelOverlay(request: Settings): Promise<Settings> {
@@ -129,12 +130,21 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
     }
     // Unknown secret-bearing system policy cannot safely be relocated; retain the original configuration.
     if (/"(?:env|[^"\s]*(?:api[_-]?key|password|token|secret|authorization)[^"\s]*)"\s*:/i.test(JSON.stringify(overlay))) return request;
-    dir = await mkdtemp(join(tmpdir(), "bb-qwen-models-"));
-    const path = join(dir, "settings.json");
-    await writeFile(path, JSON.stringify(overlay), { mode: 0o600 });
-    // Guard the SDK's legacy fallback too: Qwen otherwise persists session/set_model.
-    const proxy = join(dir, "acp.mjs");
-    await writeFile(proxy, `import {spawn} from 'node:child_process';
+    // Only a digest of credentials participates in reuse; generated files contain no secrets.
+    const identity = createHash("sha256").update(JSON.stringify(
+      [launch, effective, env, defaultsPath, systemPath, home, overlay],
+      (_key, value) => value && typeof value === "object" && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))) : value,
+    )).digest("hex");
+    let files = overlays.get(identity);
+    if (!files) {
+      files = (async () => {
+        dir = await mkdtemp(join(tmpdir(), "bb-qwen-models-"));
+        const path = join(dir, "settings.json");
+        await writeFile(path, JSON.stringify(overlay), { mode: 0o600 });
+        // Guard the SDK's legacy fallback too: Qwen otherwise persists session/set_model.
+        const proxy = join(dir, "acp.mjs");
+        await writeFile(proxy, `import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 const child=spawn(${JSON.stringify(launch.command)},${JSON.stringify(launch.args)}, {stdio:['pipe','inherit','inherit'],shell:process.platform==='win32' && !${JSON.stringify(launch.command)}.toLowerCase().endsWith('.exe'),windowsHide:true});
 createInterface({input:process.stdin}).on('line',line=>{
@@ -146,7 +156,14 @@ child.on('exit',code=>process.exit(code??1));
 child.on('error',()=>process.exit(1));
 process.on('SIGTERM',()=>child.kill());
 `, { mode: 0o600 });
-    directories.add(dir);
+        directories.add(dir);
+        return { path, proxy };
+      })();
+      overlays.set(identity, files);
+      // Retry failed writes, while keeping successful generations alive until host exit.
+      void files.catch(() => { overlays.delete(identity); });
+    }
+    const { path, proxy } = await files;
     childEnv.QWEN_CODE_SYSTEM_SETTINGS_PATH = path;
     childEnv.QWEN_CODE_SYSTEM_DEFAULTS_PATH = defaultsPath;
     const providerOptions = { ...po, acpLaunchSpec: { ...launch, command: process.execPath, args: [proxy], env: childEnv } };

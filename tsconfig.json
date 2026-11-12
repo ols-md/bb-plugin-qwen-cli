@@ -18,6 +18,7 @@
     "server.ts",
     "host.ts",
     "dialect.ts",
+    "dialect.test.ts",
     "model-discovery.ts",
     "model-discovery.test.ts"
   ]

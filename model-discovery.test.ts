@@ -77,3 +77,73 @@ test("both launch shapes merge policy and custom metadata without storing creden
     assert.equal(process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH, undefined);
   } finally { globalThis.fetch = originalFetch; await rm(root, { recursive: true, force: true }); }
 });
+
+
+test("overlay paths are reused across turns and concurrent prepares; changed inputs retain old files", async () => {
+  const root = await mkdtemp(join(tmpdir(), "qwen-reuse-test-"));
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  try {
+    const home = join(root, "home"); await mkdir(home);
+    const system = join(root, "system.json");
+    await writeFile(system, "{}");
+    const settings = { modelProviders: { openai: [
+      { id: "configured", baseUrl: base, envKey: "OVERLAY_REUSE_KEY" },
+    ] } };
+    await writeFile(join(home, "settings.json"), JSON.stringify(settings));
+    let catalog = "catalog-first";
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response(JSON.stringify({ data: [{ id: catalog }] }));
+    }) as typeof fetch;
+    const launch = { command: process.execPath, args: ["--version"], env: {
+      QWEN_HOME: home, QWEN_CODE_SYSTEM_SETTINGS_PATH: system,
+      OVERLAY_REUSE_KEY: "reuse-secret-first",
+    } };
+    const prepare = async (method = "thread/resume") => {
+      const providerOptions = { acpLaunchSpec: launch };
+      const result = await prepareModelOverlay({ method, params: { cwd: root,
+        ...(["provider/models", "model/list"].includes(method)
+          ? { providerOptions } : { options: { providerOptions } }),
+      } });
+      return (result.params.providerOptions ?? result.params.options.providerOptions).acpLaunchSpec;
+    };
+    const [first, concurrent] = await Promise.all([prepare(), prepare()]);
+    assert.deepEqual(first, concurrent);
+    for (const method of ["provider/models", "model/list", "thread/start", "thread/resume"]) {
+      assert.deepEqual(await prepare(method), first);
+    }
+    assert.equal(calls, 1);
+    const generations = [first];
+    const changed = async () => {
+      const next = await prepare();
+      assert.notEqual(next.args[0], generations.at(-1).args[0]);
+      assert.notEqual(next.env.QWEN_CODE_SYSTEM_SETTINGS_PATH, generations.at(-1).env.QWEN_CODE_SYSTEM_SETTINGS_PATH);
+      assert.deepEqual(await prepare(), next);
+      generations.push(next);
+    };
+    catalog = "catalog-second";
+    Date.now = () => originalNow() + 6 * 60_000;
+    await changed();
+    assert.ok((await readFile(generations.at(-1).env.QWEN_CODE_SYSTEM_SETTINGS_PATH, "utf8")).includes(catalog));
+    await writeFile(system, JSON.stringify({ security: { policy: "changed" } }));
+    await changed();
+    settings.modelProviders.openai[0].baseUrl = "https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1";
+    await writeFile(join(home, "settings.json"), JSON.stringify(settings));
+    await changed();
+    launch.env.OVERLAY_REUSE_KEY = "reuse-secret-second";
+    await changed();
+    launch.args = ["--help"];
+    await changed();
+    for (const generation of generations) {
+      const text = await readFile(generation.env.QWEN_CODE_SYSTEM_SETTINGS_PATH, "utf8");
+      const proxy = await readFile(generation.args[0], "utf8");
+      assert.ok(!text.includes("reuse-secret") && !proxy.includes("reuse-secret"));
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    await rm(root, { recursive: true, force: true });
+  }
+});
