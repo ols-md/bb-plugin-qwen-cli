@@ -9,6 +9,7 @@ import { Transform } from "node:stream";
 import { QWEN_ACP_DIALECT_ID, registerQwenAcpDialect } from "./dialect.ts";
 import { mapPromptMode } from "./prompt-mode.ts";
 import { readQwenProviderUsage } from "./usage.ts";
+import { prepareModelOverlay } from "./model-discovery.ts";
 
 registerQwenAcpDialect();
 
@@ -217,6 +218,10 @@ export const experimental_providerBridge = {
       line = mapPromptMode(JSON.stringify(parsed), parsed);
     }
 
-    experimental_acpProviderBridge.handleLine(line);
+    if (parsed && ["provider/models", "model/list", "thread/start", "thread/resume"].includes(parsed.method)) {
+      void prepareModelOverlay(JSON.parse(line)).then((request) =>
+        experimental_acpProviderBridge.handleLine(JSON.stringify(request)),
+      );
+    } else experimental_acpProviderBridge.handleLine(line);
   },
 };
