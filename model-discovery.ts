@@ -1,5 +1,6 @@
 import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { homedir, tmpdir, platform } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -11,11 +12,15 @@ const endpoints = new Set([
 ]);
 const cache = new Map<string, { until: number; ids: string[]; pending?: Promise<string[]> }>();
 
+export function isChatId(id: string): boolean {
+  return /^[\w.:-]{1,200}$/.test(id) &&
+    !/^(auto$|wan|qwen-(image|audio)|.*(?:image|audio|video|embedding|rerank))/i.test(id);
+}
+
 export function chatIds(body: any): string[] {
   if (!Array.isArray(body?.data)) throw new Error("Invalid catalog");
   return [...new Set<string>(body.data.slice(0, 2000).flatMap((m: any) =>
-    typeof m?.id === "string" && /^[\w.:-]{1,200}$/.test(m.id) &&
-    !/^(auto$|wan|qwen-(image|audio)|.*(?:image|audio|video|embedding|rerank))/i.test(m.id) ? [m.id] : []))];
+    typeof m?.id === "string" && isChatId(m.id) ? [m.id] : []))];
 }
 
 export async function discover(base: string, key: string, fetcher = fetch): Promise<string[]> {
@@ -70,7 +75,27 @@ export function mergeSettings(a: Settings, b: Settings): Settings {
 // Paths remain valid for all child settings reloads, and are removed with the host worker.
 const directories = new Set<string>();
 const overlays = new Map<string, Promise<{ path: string; proxy: string }>>();
+// Env keys this worker published for SDK spawn paths that drop per-request env;
+// they are generated artifacts and must not feed back into overlay inputs.
+const publishedEnv = new Set<string>();
 process.once("exit", () => { for (const dir of directories) rmSync(dir, { recursive: true, force: true }); });
+
+// The SDK strips ELECTRON_RUN_AS_NODE from every spawned agent env, so a proxy launched
+// with an Electron process.execPath would boot the GUI on desktop bb and exit 0 instantly.
+// Prefer a plain node binary from PATH when this host worker runs inside Electron.
+let runnerCache: string | undefined;
+export function nodeRunner(): string {
+  if (runnerCache !== undefined) return runnerCache;
+  if (!(process.versions as any)?.electron) return (runnerCache = process.execPath);
+  try {
+    const probe = spawnSync(process.platform === "win32" ? "where.exe" : "which", ["node"], {
+      encoding: "utf8", timeout: 4000, windowsHide: true,
+    });
+    const first = String(probe.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).find((s) => s.length > 0);
+    if (probe.status === 0 && first) return (runnerCache = first);
+  } catch { /* fall back below */ }
+  return (runnerCache = process.execPath);
+}
 
 export async function prepareModelOverlay(request: Settings): Promise<Settings> {
   if (!["provider/models", "model/list", "thread/start", "thread/resume"].includes(request.method)) return request;
@@ -81,6 +106,7 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
   let dir: string | undefined;
   try {
     const env = { ...process.env, ...launch.env };
+    for (const key of publishedEnv) if (!(key in launch.env)) delete env[key];
     const systemPath = env.QWEN_CODE_SYSTEM_SETTINGS_PATH ?? (platform() === "win32"
       ? "C:\\ProgramData\\qwen-code\\settings.json" : platform() === "darwin"
         ? "/Library/Application Support/QwenCode/settings.json" : "/etc/qwen-code/settings.json");
@@ -103,6 +129,7 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
     const credentials = { ...effective.env, ...env };
     const providers = structuredClone(effective.modelProviders ?? {});
     let enabled = false;
+    let target: { models: any[]; baseUrl: string; envKey: string } | null = null;
     for (const models of Object.values(providers) as any[]) {
       if (!Array.isArray(models)) continue;
       const routes = new Map<string, any>();
@@ -114,6 +141,7 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
         const key = credentials[route.envKey];
         if (typeof key !== "string" || !key) continue;
         enabled = true;
+        target ??= { models, baseUrl: route.baseUrl, envKey: route.envKey };
         for (const id of await discover(route.baseUrl.replace(/\/$/, ""), key)) {
           if (models.some((m: any) => m.id === id && m.baseUrl === route.baseUrl)) continue;
           models.push({ id, name: id, baseUrl: route.baseUrl, envKey: route.envKey });
@@ -121,6 +149,17 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
       }
     }
     if (!enabled) return request;
+    // A cold or failed catalog fetch must not make an explicitly requested model
+    // unselectable; attach it to the enabled route so session validation passes.
+    const requestedRaw = listing ? null : request.params?.options?.model;
+    const open = typeof requestedRaw === "string" ? requestedRaw.lastIndexOf("(") : -1;
+    const requested = typeof requestedRaw === "string"
+      ? (open > 0 && requestedRaw.endsWith(")") ? requestedRaw.slice(0, open) : requestedRaw)
+      : null;
+    if (requested && target && isChatId(requested) &&
+      !Object.values(providers).some((list: any) => Array.isArray(list) && list.some((m: any) => m?.id === requested))) {
+      target.models.push({ id: requested, name: requested, baseUrl: target.baseUrl, envKey: target.envKey });
+    }
     const overlay: Settings = { ...system, modelProviders: providers };
     // Never serialize settings.env or inline provider credentials into temporary storage.
     // The child's own settings env is missing (deleted above), so forward merged env values through the process environment.
@@ -161,7 +200,12 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
         const proxy = join(dir, "acp.mjs");
         await writeFile(proxy, `import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
-const child=spawn(${JSON.stringify(launch.command)},${JSON.stringify(launch.args)}, {stdio:['pipe','inherit','inherit'],shell:process.platform==='win32' && !${JSON.stringify(launch.command)}.toLowerCase().endsWith('.exe'),windowsHide:true});
+// Some SDK spawn paths (session model discovery) launch this proxy without the
+// per-request env; the overlay paths are identity-scoped, so bake them as fallbacks.
+const _env={...process.env};
+if(!_env.QWEN_CODE_SYSTEM_SETTINGS_PATH) _env.QWEN_CODE_SYSTEM_SETTINGS_PATH=${JSON.stringify(path)};
+if(!_env.QWEN_CODE_SYSTEM_DEFAULTS_PATH) _env.QWEN_CODE_SYSTEM_DEFAULTS_PATH=${JSON.stringify(defaultsPath)};
+const child=spawn(${JSON.stringify(launch.command)},${JSON.stringify(launch.args)}, {stdio:['pipe','inherit','inherit'],shell:process.platform==='win32' && !${JSON.stringify(launch.command)}.toLowerCase().endsWith('.exe'),windowsHide:true,env:_env});
 createInterface({input:process.stdin}).on('line',line=>{
  try {const m=JSON.parse(line);if(m.method==='session/set_model') {m.params={...m.params,_meta:{...m.params?._meta,'qwen.session.modelPersistDefault':false}};line=JSON.stringify(m);}} catch {}
  child.stdin.write(line+'\\n');
@@ -181,7 +225,11 @@ process.on('SIGTERM',()=>child.kill());
     const { path, proxy } = await files;
     childEnv.QWEN_CODE_SYSTEM_SETTINGS_PATH = path;
     childEnv.QWEN_CODE_SYSTEM_DEFAULTS_PATH = defaultsPath;
-    const providerOptions = { ...po, acpLaunchSpec: { ...launch, command: process.execPath, args: [proxy], env: childEnv } };
+    // Some SDK spawn paths (session model discovery) build their child env from the worker
+    // env alone and drop per-request launch env; publish the overlay there so every spawn
+    // from this worker sees the merged settings. Last prepared overlay wins per worker.
+    for (const [key, value] of Object.entries(childEnv)) { process.env[key] = value; publishedEnv.add(key); }
+    const providerOptions = { ...po, acpLaunchSpec: { ...launch, command: nodeRunner(), args: [proxy], env: childEnv } };
     return { ...request, params: { ...request.params, ...(listing ? { providerOptions }
       : { options: { ...request.params.options, providerOptions } }) } };
   } catch (err) {
