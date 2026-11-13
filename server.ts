@@ -1,11 +1,12 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { QWEN_ACP_DIALECT_ID } from "./dialect.ts";
+import { QWEN_WORKFLOW_ENV } from "./workflow-policy.ts";
 
 const launchSpec = {
   displayName: "Qwen Code CLI",
   command: "qwen",
   args: ["--acp", "--channel", "ACP"],
-  env: {},
+  env: QWEN_WORKFLOW_ENV,
 };
 
 export default async function qwenPlugin(bb: BbPluginApi) {
