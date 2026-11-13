@@ -162,3 +162,27 @@ bb-plugin-qwen-cli/
 ## License
 
 [MIT](LICENSE). This project is independent of Alibaba, Qwen, and BB.
+
+## Token Plan catalog refresh
+
+Before model discovery and new/resumed threads, the host queries the configured
+QwenCloud Token Plan `/models` endpoint. New chat model IDs appear on the next
+refresh after a five minute cache expires; image, audio, video and `auto` entries
+are excluded. Existing model metadata and custom endpoint routes are retained.
+Unknown models use the CLI's defaults rather than guessed reasoning tiers.
+
+Only the dedicated global and China HTTPS Token Plan endpoints receive credentials.
+Credentials resolve from Qwen user/system settings `env` and the child environment;
+they are never logged or written into the generated settings file. Fetches have a
+five second deadline, a 512 KB response limit, and no redirects. Failures retain
+configured models and the last successful in-memory catalog (retry after a minute).
+
+The host injects a temporary system settings overlay into ACP children, retaining
+system policy and the original system-defaults path. It leaves home/auth paths
+unchanged and removes temporary files when the child or host exits. Workspace configurations
+with `modelProviders`, system `env`, malformed settings, or unrecognized secret-bearing
+system fields conservatively keep the original CLI configuration without discovery.
+Selection uses Qwen's session config API; the legacy model selection fallback is
+also marked session-only. Selecting models does not save user/workspace defaults.
+
+Run `npm test`, `npm run check`, and `npm run build` to validate the implementation.

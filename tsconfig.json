@@ -4,7 +4,9 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "esModuleInterop": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
@@ -12,5 +14,12 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["server.ts", "host.ts", "dialect.ts"]
+  "include": [
+    "server.ts",
+    "host.ts",
+    "dialect.ts",
+    "dialect.test.ts",
+    "model-discovery.ts",
+    "model-discovery.test.ts"
+  ]
 }

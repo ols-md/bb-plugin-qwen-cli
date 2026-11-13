@@ -1,6 +1,7 @@
 import {
   experimental_registerAcpDialect,
   type AcpDialect,
+  type AcpClassifiedToolCall,
   type AcpToolCallUpdateEvent,
   type AcpToolKind,
 } from "@get-bb/plugin-sdk/provider-bridge/acp";
@@ -17,10 +18,7 @@ export interface DialectPresentation {
   detail?: string;
 }
 
-export type AcpDialectToolClassification =
-  | { kind: "command"; presentation: DialectPresentation; item?: Record<string, unknown> }
-  | { kind: "tool_use"; tool: string; detail?: string | null; presentation: DialectPresentation; item?: Record<string, unknown> }
-  | { kind: "delegation"; label: string; detail?: string | null; background: boolean; childRef?: string; presentation: DialectPresentation; item?: Record<string, unknown> };
+export type AcpDialectToolClassification = AcpClassifiedToolCall;
 
 // ---- Constants ----
 
@@ -114,6 +112,14 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
 
   const ri = (event.rawInput && typeof event.rawInput === "object" && !Array.isArray(event.rawInput)) ? (event.rawInput as Record<string, unknown>) : {};
 
+  const genericItem: AcpClassifiedToolCall["item"] = {
+    type: "tool", tool: name, args: event.rawInput, result: event.rawOutput,
+  };
+  const changes = (event.content ?? []).flatMap(entry => entry.type === "diff" ? [{
+    path: entry.path, kind: entry.oldText == null ? "add" as const : "update" as const,
+    newText: entry.newText, ...(entry.oldText == null ? {} : { oldText: entry.oldText }),
+  }] : []);
+
   switch (name) {
     case "run_command": {
       const cmd = typeof ri.CommandLine === "string" ? ri.CommandLine : typeof ri.command === "string" ? ri.command : undefined;
@@ -123,7 +129,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         icon: { glyph: "Terminal" },
         ...(summary ? { title: summary.trim(), ...(cmd ? { detail: trunc(cmd), subtitle: cmd } : {}) } : { title: cmd || event.title || "Command" }),
       };
-      return { kind: "command", presentation: pres, item: { type: "command", command: cmd ?? "", cwd: "" } };
+      return { presentation: pres, item: { type: "command", command: cmd ?? "", cwd: "" } };
     }
     case "read_file": case "view_file": case "view_file_outline": case "view_code_item": {
       const fp = typeof ri.file_path === "string" ? ri.file_path : typeof ri.Path === "string" ? ri.Path : undefined;
@@ -133,7 +139,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: fp ? `Read ${fp}` : "Read file",
         ...(fp ? { detail: trunc(fp), subtitle: fp } : {}),
       };
-      return { kind: "tool_use", tool: name, presentation: pres };
+      return { item: fp ? { type: "fileRead", path: fp } : genericItem, presentation: pres };
     }
     case "write_file": {
       const fp = typeof ri.file_path === "string" ? ri.file_path : typeof ri.Path === "string" ? ri.Path : undefined;
@@ -143,7 +149,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: fp ? `Write ${fp}` : "Write file",
         ...(fp ? { detail: trunc(fp), subtitle: fp } : {}),
       };
-      return { kind: "tool_use", tool: "write_file", presentation: pres };
+      return { item: changes.length ? { type: "fileChange", changes } : genericItem, presentation: pres };
     }
     case "edit": {
       const fp = typeof ri.file_path === "string" ? ri.file_path : typeof ri.Path === "string" ? ri.Path : undefined;
@@ -153,7 +159,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: fp ? `Edit ${fp}` : "Edit file",
         ...(fp ? { detail: trunc(fp), subtitle: fp } : {}),
       };
-      return { kind: "tool_use", tool: "edit", presentation: pres };
+      return { item: changes.length ? { type: "fileChange", changes } : genericItem, presentation: pres };
     }
     case "grep_search": case "code_search": {
       const pat = typeof ri.pattern === "string" ? ri.pattern : typeof ri.query === "string" ? ri.query : undefined;
@@ -163,7 +169,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: pat ? `Search: ${pat}` : "Search code",
         ...(pat ? { detail: trunc(pat), subtitle: pat } : {}),
       };
-      return { kind: "tool_use", tool: name, presentation: pres };
+      return { item: pat ? { type: "search", query: pat, mode: "content" } : genericItem, presentation: pres };
     }
     case "glob": case "find_by_name": {
       const pat = typeof ri.pattern === "string" ? ri.pattern : undefined;
@@ -173,7 +179,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: pat ? `Find: ${pat}` : "Find files",
         ...(pat ? { detail: trunc(pat), subtitle: pat } : {}),
       };
-      return { kind: "tool_use", tool: name, presentation: pres };
+      return { item: pat ? { type: "search", query: pat, mode: "path" } : genericItem, presentation: pres };
     }
     case "list_dir": case "list_resources": {
       const p = typeof ri.path === "string" ? ri.path : typeof ri.directory === "string" ? ri.directory : undefined;
@@ -183,7 +189,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: p ? `List ${p}` : "List directory",
         ...(p ? { detail: trunc(p), subtitle: p } : {}),
       };
-      return { kind: "tool_use", tool: name, presentation: pres };
+      return { item: genericItem, presentation: pres };
     }
     case "web_fetch": case "read_url_content": {
       const url = typeof ri.url === "string" ? ri.url : undefined;
@@ -193,7 +199,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: url || "Fetch URL",
         ...(url ? { detail: trunc(url), subtitle: url } : {}),
       };
-      return { kind: "tool_use", tool: name, presentation: pres };
+      return { item: url ? { type: "webFetch", url, pattern: null } : genericItem, presentation: pres };
     }
     case "web_search": case "search_web": {
       const q = typeof ri.query === "string" ? ri.query : typeof ri.search === "string" ? ri.search : undefined;
@@ -203,7 +209,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: q ? `Search: ${q}` : "Web search",
         ...(q ? { detail: trunc(q), subtitle: q } : {}),
       };
-      return { kind: "tool_use", tool: name, presentation: pres };
+      return { item: q ? { type: "webSearch", queries: [q] } : genericItem, presentation: pres };
     }
     case "invoke_subagent": {
       const role = typeof ri.Role === "string" && ri.Role.trim() ? ri.Role.trim() : typeof ri.TypeName === "string" && ri.TypeName.trim() ? ri.TypeName.trim() : "Subagent";
@@ -215,7 +221,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: role,
         ...(detail ? { detail: trunc(detail), subtitle: detail } : {}),
       };
-      return { kind: "delegation", label: role, detail, background: true, presentation: pres, item: { type: "delegation", childRef: event.toolCallId, label: role, summary: detail || undefined, background: true } };
+      return { presentation: pres, item: { type: "delegation", childRef: event.toolCallId, label: role, summary: detail || undefined, background: true } };
     }
     case "define_subagent": {
       const n = typeof ri.Name === "string" && ri.Name.trim() ? ri.Name.trim() : undefined;
@@ -226,7 +232,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: n ? `Define subagent ${n}` : "Define subagent",
         ...(desc ? { detail: trunc(desc), subtitle: desc } : {}),
       };
-      return { kind: "tool_use", tool: "define_subagent", detail: desc || n || null, presentation: pres };
+      return { item: genericItem, presentation: pres };
     }
     case "manage_subagents": {
       const action = typeof ri.Action === "string" ? ri.Action.trim() : undefined;
@@ -240,7 +246,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: action === "list" ? "List subagents" : action === "kill" || action === "kill_all" ? "Stop subagents" : "Manage subagents",
         ...(ids ? { detail: trunc(ids), subtitle: ids } : {}),
       };
-      return { kind: "tool_use", tool: "manage_subagents", detail: ids || action || null, presentation: pres };
+      return { item: genericItem, presentation: pres };
     }
     case "send_message": {
       const recipient = typeof ri.Recipient === "string" && ri.Recipient.trim() ? ri.Recipient.trim() : undefined;
@@ -251,7 +257,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: recipient ? `Message ${recipient}` : "Message subagent",
         ...(msg ? { detail: trunc(msg.slice(0, 120)), subtitle: msg.slice(0, 120) } : {}),
       };
-      return { kind: "tool_use", tool: "send_message", detail: recipient || null, presentation: pres };
+      return { item: genericItem, presentation: pres };
     }
     case "manage_task": {
       const action = typeof ri.Action === "string" ? ri.Action.trim() : undefined;
@@ -266,7 +272,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         icon: { glyph: "Terminal" },
         title: tid ? `${action || "Task"}: ${tid}` : action ? `Task ${action}` : "Manage task",
       };
-      return { kind: "tool_use", tool: "manage_task", detail: tid || action || null, presentation: pres };
+      return { item: genericItem, presentation: pres };
     }
     case "schedule": {
       const dur = typeof ri.DurationSeconds === "number" ? ri.DurationSeconds : undefined;
@@ -279,7 +285,7 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
         title: sched ? `Schedule (${sched})` : "Schedule task",
         ...(prompt ? { detail: trunc(prompt.slice(0, 120)), subtitle: prompt.slice(0, 120) } : {}),
       };
-      return { kind: "tool_use", tool: "schedule", detail: sched || prompt || null, presentation: pres };
+      return { item: genericItem, presentation: pres };
     }
     default:
       return null;
@@ -290,8 +296,8 @@ export function classifyToolCall(event: AcpToolUpdateEvent): AcpDialectToolClass
 
 export const qwenAcpDialect: AcpDialect = {
   id: QWEN_ACP_DIALECT_ID,
-  toolIdentity: ((e: AcpToolUpdateEvent) => toolIdentity(e) ?? undefined) as any,
-  classifyToolCall: ((e: AcpToolUpdateEvent) => classifyToolCall(e) ?? undefined) as any,
+  toolIdentity: ((e: AcpToolUpdateEvent) => toolIdentity(e) ?? undefined),
+  classifyToolCall: ((e: AcpToolUpdateEvent) => classifyToolCall(e) ?? undefined),
 };
 
 let registered = false;
