@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-import { chatIds, discover, prepareModelOverlay } from "./model-discovery.ts";
+import { chatIds, discover, prepareModelOverlay, nodeRunner } from "./model-discovery.ts";
 
 const base = "https://token-plan.maas.qwencloudapi.com/compatible-mode/v1";
 test("catalog validation, filtering, exact IDs and deduplication", () => {
@@ -79,13 +79,50 @@ test("both launch shapes merge policy and custom metadata without storing creden
     // Workspace with Token Plan route: discovery defers to workspace
     await mkdir(join(root, ".qwen"));
     await writeFile(join(root, ".qwen", "settings.json"), JSON.stringify({ modelProviders: { openai: [{ baseUrl: base }] } }));
+    const published = process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+    assert.ok(published && published.includes("bb-qwen-models-"), "success path publishes the overlay env to the worker");
     assert.equal(await prepareModelOverlay(request), request);
     await writeFile(system, '{"env":{"SYSTEM_POLICY":"preserve-precedence"}}');
     assert.equal(await prepareModelOverlay(request), request);
-    assert.equal(process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH, undefined);
-  } finally { globalThis.fetch = originalFetch; await rm(root, { recursive: true, force: true }); }
+    assert.equal(process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH, published, "bail paths must not republish the overlay env");
+  } finally {
+    delete process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+    delete process.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH;
+    delete process.env.TEST_PLAN_KEY;
+    globalThis.fetch = originalFetch; await rm(root, { recursive: true, force: true }); }
 });
 
+
+test("requested model survives a cold catalog; proxy bakes overlay env fallbacks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "qwen-inject-"));
+  const originalFetch = globalThis.fetch;
+  try {
+    const home = join(root, "home"); await mkdir(home);
+    const system = join(root, "system.json"); await writeFile(system, "{}");
+    await writeFile(join(home, "settings.json"), JSON.stringify({
+      env: { INJ_KEY: "inject-secret" },
+      modelProviders: { openai: [{ id: "configured", baseUrl: base, envKey: "INJ_KEY" }] },
+    }));
+    globalThis.fetch = (async () => new Response(JSON.stringify({ data: [] }))) as typeof fetch;
+    const request = { method: "thread/start", params: { cwd: root, options: { model: "future-new-chat(openai)", providerOptions: {
+      acpLaunchSpec: { command: process.execPath, args: ["-e", ""], env: { QWEN_HOME: home, QWEN_CODE_SYSTEM_SETTINGS_PATH: system } },
+    } } } };
+    const result = await prepareModelOverlay(request);
+    const spec = result.params.options.providerOptions.acpLaunchSpec;
+    const overlay = JSON.parse(await readFile(spec.env.QWEN_CODE_SYSTEM_SETTINGS_PATH, "utf8"));
+    assert.ok(overlay.modelProviders.openai.some((m: any) => m.id === "future-new-chat"), "requested model is injected when the catalog is cold");
+    const proxy = await readFile(spec.args[0], "utf8");
+    assert.ok(proxy.includes("QWEN_CODE_SYSTEM_SETTINGS_PATH="), "proxy bakes the overlay path as env fallback");
+    assert.ok(!proxy.includes("inject-secret"), "proxy carries no secrets");
+    assert.equal(nodeRunner(), process.execPath, "non-electron workers keep process.execPath");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+    delete process.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH;
+    delete process.env.INJ_KEY;
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("electron host worker keeps ELECTRON_RUN_AS_NODE and forwards user env keys to the overlay child", async () => {
   const root = await mkdtemp(join(tmpdir(), "qwen-electron-test-"));
@@ -111,6 +148,9 @@ test("electron host worker keeps ELECTRON_RUN_AS_NODE and forwards user env keys
     globalThis.fetch = originalFetch;
     if (original === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
     else process.env.ELECTRON_RUN_AS_NODE = original;
+    delete process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
+    delete process.env.QWEN_CODE_SYSTEM_DEFAULTS_PATH;
+    delete process.env.TEST_KEY;
     await rm(root, { recursive: true, force: true });
   }
 });
