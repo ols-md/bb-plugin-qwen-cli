@@ -1,4 +1,4 @@
-﻿import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir, tmpdir, platform } from "node:os";
@@ -152,7 +152,10 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
     // A cold or failed catalog fetch must not make an explicitly requested model
     // unselectable; attach it to the enabled route so session validation passes.
     const requestedRaw = listing ? null : request.params?.options?.model;
-    const requested = typeof requestedRaw === "string" ? requestedRaw.replace(/\([^)]*\)$/, "") : null;
+    const open = typeof requestedRaw === "string" ? requestedRaw.lastIndexOf("(") : -1;
+    const requested = typeof requestedRaw === "string"
+      ? (open > 0 && requestedRaw.endsWith(")") ? requestedRaw.slice(0, open) : requestedRaw)
+      : null;
     if (requested && target && isChatId(requested) &&
       !Object.values(providers).some((list: any) => Array.isArray(list) && list.some((m: any) => m?.id === requested))) {
       target.models.push({ id: requested, name: requested, baseUrl: target.baseUrl, envKey: target.envKey });
