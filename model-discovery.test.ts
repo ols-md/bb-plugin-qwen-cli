@@ -68,10 +68,17 @@ test("both launch shapes merge policy and custom metadata without storing creden
       assert.equal(forwarded.params._meta["qwen.session.modelPersistDefault"], false);
     }
     await mkdir(join(root, ".qwen"));
-    await writeFile(join(root, ".qwen", "settings.json"), '{"modelProviders":{"openai":[]}}');
+    // Non-Token-Plan workspace modelProviders: discovery proceeds (harmless override)
+    await writeFile(join(root, ".qwen", "settings.json"), '{"modelProviders":{"openai":[{"id":"local","baseUrl":"https://custom.invalid"}]}}');
     const request = { method: "provider/models", params: { cwd: root, providerOptions: po } };
-    assert.equal(await prepareModelOverlay(request), request);
+    const overlayAfterWs = await prepareModelOverlay(request);
+    assert.notEqual(overlayAfterWs, request, "discovery should proceed when workspace has no Token Plan routes");
+    assert.ok(overlayAfterWs.params.providerOptions.acpLaunchSpec.env.QWEN_CODE_SYSTEM_SETTINGS_PATH);
     await rm(join(root, ".qwen"), { recursive: true });
+    // Workspace with Token Plan route: discovery defers to workspace
+    await mkdir(join(root, ".qwen"));
+    await writeFile(join(root, ".qwen", "settings.json"), JSON.stringify({ modelProviders: { openai: [{ baseUrl: base }] } }));
+    assert.equal(await prepareModelOverlay(request), request);
     await writeFile(system, '{"env":{"SYSTEM_POLICY":"preserve-precedence"}}');
     assert.equal(await prepareModelOverlay(request), request);
     assert.equal(process.env.QWEN_CODE_SYSTEM_SETTINGS_PATH, undefined);
