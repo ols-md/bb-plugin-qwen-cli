@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-qwen-cli",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "license": "MIT",
   "description": "Use the installed Qwen Code CLI as an ACP agent in BB.",

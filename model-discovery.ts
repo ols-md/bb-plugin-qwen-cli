@@ -123,8 +123,17 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
     if (!enabled) return request;
     const overlay: Settings = { ...system, modelProviders: providers };
     // Never serialize settings.env or inline provider credentials into temporary storage.
+    // The child's own settings env is missing (deleted above), so forward merged env values through the process environment.
     const childEnv: Record<string, string> = { ...launch.env };
-    for (const [key, value] of Object.entries(system.env ?? {})) if (typeof value === "string") childEnv[key] = value;
+    for (const block of [defaults.env, user.env, system.env] as Settings[]) {
+      if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+      for (const [key, value] of Object.entries(block)) {
+        if (typeof value === "string") childEnv[key] = value;
+      }
+    }
+    // When the host worker runs as an Electron binary (Windows desktop bb), spawning process.execPath
+    // bootstraps the GUI unless ELECTRON_RUN_AS_NODE is set; the child then exits 0 instantly.
+    if (process.env.ELECTRON_RUN_AS_NODE) childEnv.ELECTRON_RUN_AS_NODE = "1";
     delete overlay.env;
     let index = 0;
     for (const models of Object.values(providers) as any[]) {
