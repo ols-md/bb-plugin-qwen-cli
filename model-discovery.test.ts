@@ -50,6 +50,7 @@ test("both launch shapes merge policy and custom metadata without storing creden
     ]) {
       const result = await prepareModelOverlay(request);
       const options = result.params.providerOptions ?? result.params.options.providerOptions;
+      assert.equal(options.acpLaunchSpec.env.TEST_PLAN_KEY, "never-serialize-this");
       const text = await readFile(options.acpLaunchSpec.env.QWEN_CODE_SYSTEM_SETTINGS_PATH, "utf8");
       assert.ok(!text.includes("never-serialize-this"));
       const overlay = JSON.parse(text);
@@ -85,6 +86,34 @@ test("both launch shapes merge policy and custom metadata without storing creden
   } finally { globalThis.fetch = originalFetch; await rm(root, { recursive: true, force: true }); }
 });
 
+
+test("electron host worker keeps ELECTRON_RUN_AS_NODE and forwards user env keys to the overlay child", async () => {
+  const root = await mkdtemp(join(tmpdir(), "qwen-electron-test-"));
+  const originalFetch = globalThis.fetch;
+  const original = process.env.ELECTRON_RUN_AS_NODE;
+  try {
+    const home = join(root, "home"); await mkdir(home);
+    const system = join(root, "system.json"); await writeFile(system, "{}");
+    await writeFile(join(home, "settings.json"), JSON.stringify({
+      env: { TEST_KEY: "forwarded" },
+      modelProviders: { openai: [{ id: "any", baseUrl: base, envKey: "TEST_KEY" }] },
+    }));
+    globalThis.fetch = (async () => new Response(JSON.stringify({ data: [] }))) as typeof fetch;
+    process.env.ELECTRON_RUN_AS_NODE = "1";
+    const request = { method: "provider/models", params: { cwd: root, providerOptions: {
+      acpLaunchSpec: { command: process.execPath, args: [], env: { QWEN_HOME: home, QWEN_CODE_SYSTEM_SETTINGS_PATH: system } },
+    } } };
+    const result = await prepareModelOverlay(request);
+    const spec = result.params.providerOptions.acpLaunchSpec;
+    assert.equal(spec.env.ELECTRON_RUN_AS_NODE, "1");
+    assert.equal(spec.env.TEST_KEY, "forwarded");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (original === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+    else process.env.ELECTRON_RUN_AS_NODE = original;
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("overlay paths are reused across turns and concurrent prepares; changed inputs retain old files", async () => {
   const root = await mkdtemp(join(tmpdir(), "qwen-reuse-test-"));
