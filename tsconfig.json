@@ -19,6 +19,7 @@
     "host.ts",
     "dialect.ts",
     "dialect.test.ts",
+    "workflow-policy.test.ts",
     "model-discovery.ts",
     "model-discovery.test.ts"
   ]

@@ -47,5 +47,6 @@ Use `--prompt-mode plan` or the Plan composer action to research and plan before
 
 ## Limits
 
+- Use BB Workflows for workflow orchestration. Qwen's native workflow tools and Workflow mode control are disabled by the plugin, including on resume.
 - Session fork/rewind (`fork: "none"`), manual compaction, service tiers, and native thread archive/rename are not supported.
 - Native skills are indexed from `~/.qwen/skills` (user) and `.qwen/skills` (project).

@@ -1,6 +1,6 @@
 {
   "name": "bb-plugin-qwen-cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "license": "MIT",
   "description": "Use the installed Qwen Code CLI as an ACP agent in BB.",
@@ -9,6 +9,7 @@
     "host.ts",
     "dialect.ts",
     "prompt-mode.ts",
+    "workflow-policy.ts",
     "dist/*.js",
     "dist/*.meta.json",
     "!dist/*.map",
@@ -39,7 +40,7 @@
   "scripts": {
     "build": "bb plugin build",
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test model-discovery.test.ts dialect.test.ts"
+    "test": "node --experimental-strip-types --test model-discovery.test.ts dialect.test.ts workflow-policy.test.ts"
   },
   "dependencies": {
     "@get-bb/plugin-sdk": "0.6.132"

@@ -10,6 +10,7 @@ import { QWEN_ACP_DIALECT_ID, registerQwenAcpDialect } from "./dialect.ts";
 import { mapPromptMode } from "./prompt-mode.ts";
 import { readQwenProviderUsage } from "./usage.ts";
 import { prepareModelOverlay } from "./model-discovery.ts";
+import { enforceWorkflowPolicy, filterWorkflowOptions } from "./workflow-policy.ts";
 
 registerQwenAcpDialect();
 
@@ -118,6 +119,7 @@ let filterInstalled = false;
 function cleanModelNames(line: string): string {
   try {
     const msg = JSON.parse(line);
+    filterWorkflowOptions(msg);
     // Clean provider/models response
     if (msg.result?.models && Array.isArray(msg.result.models)) {
       for (const m of msg.result.models) {
@@ -214,6 +216,7 @@ export const experimental_providerBridge = {
       }
 
       parsed = applyDialect(parsed);
+      enforceWorkflowPolicy(parsed);
       rememberSettings(parsed);
       line = mapPromptMode(JSON.stringify(parsed), parsed);
     }

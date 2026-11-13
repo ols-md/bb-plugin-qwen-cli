@@ -96,6 +96,10 @@ The plugin launches `qwen --acp` on your machine. BB's shared [Agent Client Prot
 
 ## Modes & permissions
 
+Workflow orchestration uses **BB Workflows**. The plugin disables Qwen's native
+workflow tools and hides its Workflow mode control, including for resumed threads.
+Qwen workflow settings or environment opt-ins do not override this policy.
+
 | Control | Choice | Behavior |
 |---|---|---|
 | Work mode | Plan | Research and outline a task. No files modified, no commands run. |
