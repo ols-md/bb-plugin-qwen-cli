@@ -45,7 +45,7 @@ export async function discover(base: string, key: string, fetcher = fetch): Prom
       } finally { await reader.cancel().catch(() => {}); }
       entry.ids = chatIds(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       entry.until = Date.now() + 5 * 60_000;
-    } catch { /* Keep configured models and the last successful catalog on transient failure. */ }
+    } catch (err) { console.error("[qwen] model discovery failed:", (err as Error)?.message ?? err); }
     return entry.ids;
   })().finally(() => { delete entry.pending; });
   cache.set(identity, entry);
@@ -89,9 +89,15 @@ export async function prepareModelOverlay(request: Settings): Promise<Settings> 
     const [defaults, user, system] = await Promise.all([readSettings(defaultsPath), readSettings(join(home, "settings.json")), readSettings(systemPath)]);
     // Workspace credentials are deliberately not trusted by this host-side network operation.
     const effective = mergeSettings(mergeSettings(defaults, user), system);
-    // A System array would shadow trusted workspace routes. Let Qwen retain those verbatim.
+    // Only skip discovery when the workspace overrides a Token Plan provider with its own routes.
     const workspace = resolve(request.params?.cwd ?? request.params?.options?.cwd ?? process.cwd());
-    if ((await readSettings(join(workspace, ".qwen", "settings.json"))).modelProviders) return request;
+    const wsProviders = (await readSettings(join(workspace, ".qwen", "settings.json"))).modelProviders;
+    if (wsProviders && typeof wsProviders === "object") {
+      for (const models of Object.values(wsProviders) as any[]) {
+        if (!Array.isArray(models)) continue;
+        if (models.some((m: any) => endpoints.has(typeof m.baseUrl === "string" ? m.baseUrl.replace(/\/$/, "") : ""))) return request;
+      }
+    }
     // Moving System env into process.env would change Qwen's env precedence.
     if (Object.keys(system.env ?? {}).length) return request;
     const credentials = { ...effective.env, ...env };
@@ -169,7 +175,8 @@ process.on('SIGTERM',()=>child.kill());
     const providerOptions = { ...po, acpLaunchSpec: { ...launch, command: process.execPath, args: [proxy], env: childEnv } };
     return { ...request, params: { ...request.params, ...(listing ? { providerOptions }
       : { options: { ...request.params.options, providerOptions } }) } };
-  } catch {
+  } catch (err) {
+    console.error("[qwen] model overlay failed:", (err as Error)?.message ?? err);
     if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {});
     return request;
   }
