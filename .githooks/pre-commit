@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+if command -v gitleaks >/dev/null 2>&1; then
+  scanner=gitleaks
+else
+  scanner="$(git rev-parse --git-common-dir)/security-tools/gitleaks.exe"
+  if [ ! -x "$scanner" ]; then
+    echo "Install Gitleaks before committing; see CONTRIBUTING.md." >&2
+    exit 1
+  fi
+fi
+exec "$scanner" git --pre-commit --staged --redact .
