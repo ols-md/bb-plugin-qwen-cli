@@ -20,17 +20,35 @@ This policy covers the `bb-plugin-qwen-cli` codebase:
 - `dialect.ts` — tool classification and presentation
 - `prompt-mode.ts` — plan mode mapping
 
-The plugin delegates all authentication and credential management to the locally installed Qwen Code CLI. It never stores, transmits, or logs API keys, tokens, or credentials.
+## Credential handling
+
+Qwen Code CLI manages sign-in and authentication. For Token Plan model discovery,
+this plugin also reads credentials from Qwen settings and the process environment.
+It sends the selected key as an HTTPS Bearer header only to the `/models` endpoint
+under these exact base URLs (redirects are disabled):
+
+- `https://token-plan.maas.qwencloudapi.com/compatible-mode/v1`
+- `https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1`
+
+The plugin forwards settings environment variables and provider keys to the local
+Qwen CLI through the child environment. It also copies these values into the plugin
+worker environment to support SDK launch paths. Inline provider keys are replaced
+with environment-variable references in generated settings. Generated overlay files
+do not contain these keys. Credentials are not intentionally logged; do not publish
+raw settings, environment dumps, or diagnostic logs without reviewing them.
 
 ## Supported Versions
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | ✅        |
+| 0.2.x   | Yes       |
+| <0.2.0  | No        |
 
-## No Credential Handling
+## Public repository workflow
 
-This plugin does not handle credentials. Authentication is entirely managed by Qwen Code CLI (`qwen --acp`). No API keys, OAuth tokens, or secrets are read, stored, or forwarded by this plugin. The only data persisted are boolean settings (enabled, autoApprove, sandbox, subagentsDisabled, commandDescriptionsEnabled).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local secret checks and the publication
+checklist. CI scans Git history with Gitleaks. If a credential is published, revoke
+or rotate it immediately before attempting history cleanup.
 
 ## Dependencies
 
